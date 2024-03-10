@@ -16,8 +16,8 @@ def connect_to_typedb_core(addr) -> TypeDBDriver:
     return TypeDB.core_driver(addr)
 
 
-def generate_new_foldername(path, folder):
-    # Check if the file exists
+def generate_new_folder_name(path, folder) -> str:
+    # Check if the folder with such name exists already
     full_path = os.path.join(path, folder)
     logger.debug(f"{ full_path=}")
     if not os.path.isdir(full_path):
@@ -27,14 +27,14 @@ def generate_new_foldername(path, folder):
     if match:
         # Folder name already ends with a number, so increment this number by one
         base_name, num = match.groups()
-        new_foldername = f"{base_name}_{int(num) + 1}"
-        logger.debug(f"Incrementing: { new_foldername=}")
+        new_folder_name = f"{base_name}_{int(num) + 1}"
+        logger.debug(f"Incrementing: { new_folder_name=}")
     else:
-        # Folder name does not end with a number, so append _2 to the filename
-        new_foldername = f"{folder}_2"
-        logger.debug(f"Adding _2: { new_foldername=}")
-    # Check if the new folder name also exists and repeat the process
-    return generate_new_foldername(path, new_foldername)
+        # Folder name does not end with a number, so we append _2 to its name
+        new_folder_name = f"{folder}_2"
+        logger.debug(f"Adding _2: { new_folder_name=}")
+    # recursive call to check if the new folder name exists and repeat the process
+    return generate_new_folder_name(path, new_folder_name)
 
 
 def create_folder(db_name, schema) -> str:
@@ -42,7 +42,7 @@ def create_folder(db_name, schema) -> str:
         parent_dir = os.getcwd()
         logger.debug(f"{parent_dir=}")
         logger.debug(f"{db_name=}")
-        new_folder_name = generate_new_foldername(parent_dir, db_name)
+        new_folder_name = generate_new_folder_name(parent_dir, db_name)
         os.mkdir(new_folder_name)
         logger.debug(f"{   new_folder_name=}")
         os.mkdir(new_folder_name + "/entities")
@@ -70,28 +70,28 @@ def build_row(tx, data_instance, fields):
                     if result[column] == '':
                         result[column] = '"' + attr.as_attribute().get_value() + '"'
                     else:
-                        result[column] = result[column].join(';"' + attr.as_attribute().get_value() + '"')
+                        result[column] += ';"' + attr.as_attribute().get_value() + '"'
             else:
                 for attr in attr_list:
                     if result[column] == '':
                         result[column] = attr.as_attribute().get_value()
                     else:
-                        result[column] = result[column].join(';' + attr.as_attribute().get_value())
+                        result[column] += ';' + attr.as_attribute().get_value()
     return result
 
 
-def create_csv(tx, folder: str, processed_type):
+def create_csv(tx, folder_name: str, processed_type):
     fields = ["IID"]
     for attr in processed_type.get_owns(tx):
         attr_label = attr.get_label().name
         fields.append(attr_label)
         logger.debug(f"{ attr_label=}")
     try:
-        path = folder + "/" + processed_type.get_label().name + '.csv'
+        path = folder_name + "/" + processed_type.get_label().name + '.csv'
         with open(path, 'w', newline='') as file:
             writer = csv.DictWriter(file, fieldnames=fields)
             writer.writeheader()
-            role_path = folder + "/" + processed_type.get_label().name + '__roles.csv'
+            role_path = folder_name + "/" + processed_type.get_label().name + '__roles.csv'
             with open(role_path, 'w', newline='') as roles_file:
                 role_fields = ["Relation", "Role", "Player"]
                 role_writer = csv.DictWriter(roles_file, fieldnames=role_fields)
@@ -117,24 +117,26 @@ def create_csv(tx, folder: str, processed_type):
 def main():
     # Connect to TypeDB
     with connect_to_typedb_core(SERVER_ADDR) as connection:
-        # Retrieve and export entities
+        # Get the schema of the database and save it as a file
         schema = connection.databases.get(DATABASE_NAME).schema()
+        new_folder: str = create_folder(DATABASE_NAME, schema)
         with connection.session(DATABASE_NAME, SessionType.SCHEMA) as session:
             with session.transaction(TransactionType.READ) as tx:
                 entity_types = tx.concepts.get_root_entity_type()\
                     .get_subtypes(tx, transitivity=Transitivity.TRANSITIVE)
-                new_folder: str = create_folder(DATABASE_NAME, schema)
                 for entity_type in entity_types:
                     type_name: str = entity_type.get_label().name
                     logger.debug(f"{type_name=}")
+                    # Creating a single csv file for every entity type
                     create_csv(tx, new_folder + "/entities", entity_type)
                 relation_types = tx.concepts.get_root_relation_type()\
                     .get_subtypes(tx, transitivity=Transitivity.TRANSITIVE)
                 for relation_type in relation_types:
                     type_name: str = relation_type.get_label().name
                     logger.debug(f"{type_name=}")
+                    # Creating two csv files for every relation type: one additional for its role players
                     create_csv(tx, new_folder + "/relations", relation_type)
-                logger.info("Program complete.")
+    logger.info("Program complete.")
 
 
 if __name__ == "__main__":
