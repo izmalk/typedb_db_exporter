@@ -80,29 +80,49 @@ def build_row(tx, data_instance, fields):
     return result
 
 
-def create_csv(tx, folder_name: str, processed_type):
+def export_entities(tx, folder_name, entity_type):
     fields = ["IID"]
-    for attr in processed_type.get_owns(tx):
+    for attr in entity_type.get_owns(tx):
+        attr_label = attr.get_label().name
+        fields.append(attr_label)
+        logger.debug(f"{ attr_label=}")
+    path = folder_name + "/" + entity_type.get_label().name + '.csv'
+    try:
+        with open(path, 'w', newline='') as file:
+            writer = csv.DictWriter(file, fieldnames=fields)
+            writer.writeheader()
+            for data_instance in entity_type.get_instances(tx, Transitivity.EXPLICIT):
+                row = build_row(tx, data_instance, fields)
+                logger.debug(f"{row=}")
+                writer.writerow(row)
+    except OSError as error:
+        logger.error(error)
+        exit()
+
+
+def export_relations(tx, folder_name: str, relation_type):
+    fields = ["IID"]
+    for attr in relation_type.get_owns(tx):
         attr_label = attr.get_label().name
         fields.append(attr_label)
         logger.debug(f"{ attr_label=}")
     try:
-        path = folder_name + "/" + processed_type.get_label().name + '.csv'
+        path = folder_name + "/" + relation_type.get_label().name + '.csv'
         with open(path, 'w', newline='') as file:
             writer = csv.DictWriter(file, fieldnames=fields)
             writer.writeheader()
-            role_path = folder_name + "/" + processed_type.get_label().name + '__roles.csv'
+            role_path = folder_name + "/" + relation_type.get_label().name + '__roles.csv'
             with open(role_path, 'w', newline='') as roles_file:
                 role_fields = ["Relation", "Role", "Player"]
                 role_writer = csv.DictWriter(roles_file, fieldnames=role_fields)
                 role_writer.writeheader()
-                for data_instance in processed_type.get_instances(tx, Transitivity.EXPLICIT):
+                for data_instance in relation_type.get_instances(tx, Transitivity.EXPLICIT):
                     row = build_row(tx, data_instance, fields)
                     logger.debug(f"{row=}")
                     writer.writerow(row)
                     # Collecting role players
-                    if processed_type.is_relation_type():
-                        for role in processed_type.as_relation_type().get_relates(tx):
+                    if relation_type.is_relation_type():
+                        for role in relation_type.as_relation_type().get_relates(tx):
                             for roleplayer in data_instance.as_relation().get_players_by_role_type(tx, role):
                                 role_row = {"Relation": data_instance.get_iid(),
                                             "Role": role.get_label().name,
@@ -128,14 +148,14 @@ def main():
                     type_name: str = entity_type.get_label().name
                     logger.debug(f"{type_name=}")
                     # Creating a single csv file for every entity type
-                    create_csv(tx, new_folder + "/entities", entity_type)
+                    export_entities(tx, new_folder + "/entities", entity_type)
                 relation_types = tx.concepts.get_root_relation_type()\
                     .get_subtypes(tx, transitivity=Transitivity.TRANSITIVE)
                 for relation_type in relation_types:
                     type_name: str = relation_type.get_label().name
                     logger.debug(f"{type_name=}")
                     # Creating two csv files for every relation type: one additional for its role players
-                    create_csv(tx, new_folder + "/relations", relation_type)
+                    export_relations(tx, new_folder + "/relations", relation_type)
     logger.info("Program complete.")
 
 
